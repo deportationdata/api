@@ -25,6 +25,7 @@ function(req, res) {
   plumber::forward()  # forward to next handler for real requests
 }
 
+#* @serializer unboxedJSON
 #* @get /data
 function(req, res) {
   query <- req$args  # query parameters sent by DataTables
@@ -74,13 +75,15 @@ function(req, res) {
     data_page <- data_filtered
   }
 
-  # **Prepare JSON response**:
-  result <- list(
-    draw            = as.integer(query[["draw"]]) %||% 0,      # draw counter (use 0 if missing)
-    recordsTotal    = total_records,                           # total before filtering
-    recordsFiltered = filtered_records,                        # total after filtering
-    data            = data_page                                # page of data (rows)
+  # **Prepare JSON response using dataframe = "rows"**
+  jsonlite::toJSON(
+    list(
+      draw            = as.integer(query[["draw"]] %||% 0),      # draw counter
+      recordsTotal    = total_records,
+      recordsFiltered = filtered_records,
+      data            = data_page
+    ),
+    dataframe = "rows",   # << Key fix: each row becomes a named object
+    auto_unbox = TRUE
   )
-  return(result)  # Plumber will auto-serialize this list to JSON
 }
-
