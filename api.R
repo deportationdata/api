@@ -6,7 +6,10 @@ library(writexl)
 library(haven)
 
 # Load data from CSV at startup (replace 'path/to/data.csv' with your file path)
-data <- penguins
+
+tmp_file <- tempfile(fileext = ".xlsx")
+download.file("https://ucla.app.box.com/index.php?rm=box_download_shared_file&shared_name=9d8qnnduhus4bd5mwqt7l95kz34fic2v&file_id=f_1922082018423", destfile = tmp_file, mode = "wb")
+data <- readxl::read_excel(tmp_file, skip = 6)
 
 #* @apiTitle DataTables Server-Side API
 #* @apiDescription Provides paged, filtered, sorted data for DataTables
