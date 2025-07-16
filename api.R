@@ -108,3 +108,8 @@ function(req, res) {
     return(paste(capture.output(write.csv(df_out, row.names = FALSE, na = "")), collapse = "\n"))
   }
 }
+
+#* @get /
+function() {
+  list(status = "ok")
+}
