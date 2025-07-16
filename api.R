@@ -2,6 +2,8 @@
 library(plumber)
 library(dplyr)
 library(readr)
+library(writexl)
+library(haven)
 
 # Load data from CSV at startup (replace 'path/to/data.csv' with your file path)
 data <- penguins
@@ -72,21 +74,33 @@ function(req) {
   )
 }
 
-#* Download the full filtered set as CSV
-#* @serializer contentType list(type = "text/csv")
+#* Download filtered dataset as CSV, Excel, or Stata
 #* @get /download
 function(req, res) {
   q      <- req$args
-  df_out <- apply_query(data, q, do_page = FALSE)   # no paging → all rows
+  format <- tolower(q[["format"]] %||% "csv")
+  df_out <- apply_query(data, q, do_page = FALSE)
 
-  # tell browser to download
-  res$setHeader(
-    "Content-Disposition",
-    sprintf('attachment; filename="filtered_%s.csv"',
-            format(Sys.time(), "%Y%m%d_%H%M%S"))
-  )
+  filename_base <- sprintf("filtered_%s", format(Sys.time(), "%Y%m%d_%H%M%S"))
 
-  # stream CSV as plain text
-  paste(capture.output(write.csv(df_out, row.names = FALSE, na = "")),
-        collapse = "\n")
+  if (format == "xlsx") {
+    tmp <- tempfile(fileext = ".xlsx")
+    writexl::write_xlsx(df_out, tmp)
+    res$setHeader("Content-Disposition", paste0('attachment; filename="', filename_base, '.xlsx"'))
+    res$setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return(readBin(tmp, what = "raw", n = file.info(tmp)$size))
+
+  } else if (format == "dta") {
+    tmp <- tempfile(fileext = ".dta")
+    haven::write_dta(df_out, tmp)
+    res$setHeader("Content-Disposition", paste0('attachment; filename="', filename_base, '.dta"'))
+    res$setHeader("Content-Type", "application/x-stata-dta")
+    return(readBin(tmp, what = "raw", n = file.info(tmp)$size))
+
+  } else {
+    # default = CSV
+    res$setHeader("Content-Disposition", paste0('attachment; filename="', filename_base, '.csv"'))
+    res$setHeader("Content-Type", "text/csv")
+    return(paste(capture.output(write.csv(df_out, row.names = FALSE, na = "")), collapse = "\n"))
+  }
 }
