@@ -25,7 +25,7 @@ function(req, res) {
   plumber::forward()  # forward to next handler for real requests
 }
 
-#* @serializer unboxedJSON list("dataframe" = "rows", "auto_unbox" = TRUE)
+#* @serializer unboxedJSON list("dataframe" = "rows", "auto_unbox" = TRUE, "na" = "null")
 #* @get /data
 function(req, res) {
   query <- req$args  # query parameters sent by DataTables
