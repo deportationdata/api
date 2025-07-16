@@ -118,6 +118,6 @@ function() {
 if (sys.nframe() == 0L) {
   port <- as.integer(Sys.getenv("PORT", 8000))
   host <- "0.0.0.0"
-  pr <- plumber::pr("plumber.R")
+  pr <- plumber::plumb()
   pr$run(host = host, port = port)
 }
