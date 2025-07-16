@@ -75,6 +75,7 @@ function(req) {
 }
 
 #* Download filtered dataset as CSV, Excel, or Stata
+#* @serializer contentType list(type = "application/octet-stream")
 #* @get /download
 function(req, res) {
   q      <- req$args
