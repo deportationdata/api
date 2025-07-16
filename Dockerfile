@@ -14,10 +14,11 @@ RUN Rscript -e "install.packages(c('plumber', 'dplyr', 'readr', 'writexl', 'have
 WORKDIR /app
 
 # Copy your API file into the image
-COPY api.R /app/api.R
+COPY plumber.R /app/plumber.R
 
 # Expose port
 EXPOSE 8000
 
 # Command to run your plumber API
-CMD ["Rscript", "-e", "pr <- plumber::plumb('/app/api.R'); pr$run(host='0.0.0.0', port=8000)"]
+# CMD ["Rscript", "-e", "pr <- plumber::plumb('/app/api.R'); pr$run(host='0.0.0.0', port=8000)"]
+CMD ["Rscript", "/app/plumber.R"]

@@ -113,3 +113,11 @@ function(req, res) {
 function() {
   list(status = "ok")
 }
+
+# Start the API only if this file is the main entrypoint
+if (sys.nframe() == 0L) {
+  port <- as.integer(Sys.getenv("PORT", 8000))
+  host <- "0.0.0.0"
+  pr <- plumber::pr("api.R")
+  pr$run(host = host, port = port)
+}
