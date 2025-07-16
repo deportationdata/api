@@ -9,6 +9,22 @@ data <- penguins
 #* @apiTitle DataTables Server-Side API
 #* @apiDescription Provides paged, filtered, sorted data for DataTables
 
+#* @filter cors
+function(req, res) {
+  # Specify the allowed origin (adjust to your Quarto page's origin or use "*" for all)
+  res$setHeader("Access-Control-Allow-Origin", "*")
+  res$setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+  res$setHeader("Access-Control-Allow-Headers", "Content-Type")
+  
+  # If this is a preflight OPTIONS request, respond and end filter chain
+  if (req$REQUEST_METHOD == "OPTIONS") {
+    res$status <- 200 
+    return(list())
+  }
+  
+  plumber::forward()  # forward to next handler for real requests
+}
+
 #* @get /data
 function(req, res) {
   query <- req$args  # query parameters sent by DataTables
