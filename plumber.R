@@ -63,7 +63,7 @@ apply_query <- function(df, q, do_page = TRUE) {
   df
 }
 
-#* @serializer unboxedJSON list(dataframe = "rows", auto_unbox = TRUE, na = "null")
+#* @serializer unboxedJSON list(dataframe = "values", auto_unbox = TRUE, na = "null")
 #* @get /data
 function(req) {
   q      <- req$args
