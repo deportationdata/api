@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install plumber with dependencies
-RUN Rscript -e "install.packages(c('plumber', 'dplyr', 'readr', 'writexl', 'haven', 'readxl'))"
+RUN Rscript -e "install.packages(c('plumber', 'dplyr', 'readr', 'writexl', 'haven', 'readxl', 'arrow'))"
 
 # Set working directory
 WORKDIR /app
