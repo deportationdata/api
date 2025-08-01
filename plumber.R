@@ -5,6 +5,8 @@ library(readr)
 library(writexl)
 library(haven)
 
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
 # Load data from CSV at startup (replace 'path/to/data.csv' with your file path)
 
 data <- arrow::read_feather("https://github.com/deportationdata/ice/releases/latest/download/arrests-latest.feather")
@@ -30,36 +32,41 @@ function(req, res) {
 
 # ---- shared helper ----------------------------------------------------------
 apply_query <- function(df, q, do_page = TRUE) {
-  # --- global search ---------------------------------------------------------
-  if (!is.null(q[["search[value]"]]) && nzchar(q[["search[value]"]])) {
-    term <- q[["search[value]"]]
-    df <- 
-      df |> 
-      filter(if_any(everything(), 
-             ~ grepl(term, as.character(.x), ignore.case = TRUE)))
+  # --- per-column filters only -----------------------------------------------
+  for (i in seq_along(df)) {
+    col_query <- q[[sprintf("columns[%d][search][value]", i - 1)]]
+    if (!is.null(col_query) && nzchar(col_query)) {
+      # Strip anchors if present (like ^...$)
+      col_query <- gsub("^\\^|\\$$", "", col_query)
+      col_name <- names(df)[i]
+      df <- df |> filter(grepl(col_query, as.character(.data[[col_name]]), ignore.case = TRUE))
+    }
   }
 
-  # --- ordering (first instruction only) ------------------------------------
+  # --- ordering (only first instruction supported) ---------------------------
   if (!is.null(q[["order[0][column]"]])) {
     col_idx <- as.integer(q[["order[0][column]"]]) + 1L
     if (!is.na(col_idx) && col_idx <= ncol(df)) {
       col_nm <- names(df)[col_idx]
-      dir    <- q[["order[0][dir]"]]
-      df     <- if (identical(dir, "desc"))
-                  df |> arrange(desc(.data[[col_nm]]))
-               else df |> arrange(     .data[[col_nm]])
+      dir <- q[["order[0][dir]"]]
+      df <- if (identical(dir, "desc")) {
+        df |> arrange(desc(.data[[col_nm]]))
+      } else {
+        df |> arrange(.data[[col_nm]])
+      }
     }
   }
 
   # --- optional paging -------------------------------------------------------
   if (do_page) {
-    start  <- as.integer(q[["start"]]  %||% 0L)
+    start <- as.integer(q[["start"]] %||% 0L)
     length <- as.integer(q[["length"]] %||% 10L)
     if (!is.na(start) && !is.na(length) && length > 0) {
       end <- min(start + length, nrow(df))
-      df  <- if (start <= end) df[(start + 1L):end, ] else df[0, ]
+      df <- if (start <= end) df[(start + 1L):end, ] else df[0, ]
     }
   }
+
   df
 }
 
