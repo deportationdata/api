@@ -23,27 +23,28 @@ function(req, res){
   forward()
 }
 
-# 3. Data endpoint ---------------------------------------------------------
-#* @serializer json list(na="string")
+# 3.  Data endpoint ---------------------------------------------------------
+#* @serializer unboxedJSON list(dataframe = "rows", auto_unbox = TRUE, na = "string")
 #* @get /data
 function(req){
   q <- req$args
+  filtered <- data                               # ① start with full set
 
-  # ---- custom filters ----------------------------------------------------
-  filtered <- data |>
-    { if (nzchar(q$state     %||% "")) filter(., apprehension_state  %in% strsplit(q$state,   ",")[[1]]) else . } |>
-    { if (nzchar(q$aor       %||% "")) filter(., apprehension_aor    %in% strsplit(q$aor,     ",")[[1]]) else . } |>
-    { if (nzchar(q$country   %||% "")) filter(., citizenship_country %in% strsplit(q$country, ",")[[1]]) else . } |>
-    { if (nzchar(q$date_from %||% "")) filter(., apprehension_date >= as_date(q$date_from)) else . } |>
-    { if (nzchar(q$date_to   %||% "")) filter(., apprehension_date <= as_date(q$date_to)) else . }
+  # ---- per-column search from DataTables ------------------------------
+  for (i in seq_along(filtered)) {
+    key <- sprintf("columns[%d][search][value]", i - 1)
+    val <- q[[key]]
+    if (!is.null(val) && nzchar(val)) {
+      pattern  <- gsub("^\\^|\\$$", "", val)     # strip ^…$
+      col_name <- names(filtered)[i]
+      filtered <- filter(filtered,
+                         grepl(pattern, as.character(.data[[col_name]]),
+                               ignore.case = TRUE))
+    }
+  }
 
-  # ---- paging & ordering like DataTables expects -------------------------
-  draw   <- as.integer(q$draw   %||% 0)
-  start  <- as.integer(q$start  %||% 0)
-  length <- as.integer(q$length %||% 25)
-
-  # simple first-column ordering (extend if needed)
-  if (!is.null(q[["order[0][column]"]])){
+  # ---- ordering --------------------------------------------------------
+  if (!is.null(q[["order[0][column]"]])) {
     col_idx <- as.integer(q[["order[0][column]"]]) + 1L
     dir     <- q[["order[0][dir]"]]
     ord_col <- names(filtered)[col_idx]
@@ -51,10 +52,14 @@ function(req){
         arrange(filtered, desc(.data[[ord_col]])) else arrange(filtered, .data[[ord_col]])
   }
 
-  page <- if (length > 0) slice(filtered, (start+1):(start+length)) else filtered
+  # ---- paging ----------------------------------------------------------
+  start   <- as.integer(q$start  %||% 0)
+  length  <- as.integer(q$length %||% 25)
+  end     <- min(start + length, nrow(filtered))
+  page    <- if (length > 0 && start < end) slice(filtered, (start + 1):end) else filtered[0, ]
 
   list(
-    draw            = draw,
+    draw            = as.integer(q$draw %||% 0),
     recordsTotal    = nrow(data),
     recordsFiltered = nrow(filtered),
     data            = mutate(page, across(where(is.Date), as.character))
