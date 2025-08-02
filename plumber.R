@@ -24,7 +24,7 @@ function(req, res){
 }
 
 # 3.  Data endpoint ---------------------------------------------------------
-#* @serializer unboxedJSON list(dataframe = "rows", auto_unbox = TRUE, na = "string", rownames   = FALSE)
+#* @serializer unboxedJSON list(dataframe = "rows", auto_unbox = TRUE, rownames = FALSE)
 #* @get /data
 function(req){
   q <- req$args
