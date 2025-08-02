@@ -1,164 +1,101 @@
-# plumber.R ------------------------------------------------------------------
+# plumber.R ---------------------------------------------------------------
 library(plumber)
 library(dplyr)
-library(readr)
+library(lubridate)
 library(writexl)
 library(haven)
 library(arrow)
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-# ---------------------------------------------------------------------------
-# 1.  Load data once at start-up
-# ---------------------------------------------------------------------------
+# 1. Load dataset once -----------------------------------------------------
 data <- arrow::read_feather(
   "https://github.com/deportationdata/ice/releases/latest/download/arrests-latest.feather"
 )
 
-# ---------------------------------------------------------------------------
-# 2.  Pre-compute distinct values for each column (used for the filters list)
-#     This runs once at launch; no heavy work happens per request.
-# ---------------------------------------------------------------------------
-filters_cache <- lapply(data, function(x){
-  vals <- unique(x)
-  vals[!is.na(vals)]
-})
-names(filters_cache) <- names(data)
-
-# ---------------------------------------------------------------------------
-# 3.  CORS filter (unchanged)
-# ---------------------------------------------------------------------------
+# 2. CORS filter -----------------------------------------------------------
 #* @filter cors
 function(req, res){
   res$setHeader("Access-Control-Allow-Origin",  "*")
   res$setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
   res$setHeader("Access-Control-Allow-Headers", "Content-Type")
-
-  if (req$REQUEST_METHOD == "OPTIONS"){
-    res$status <- 200
-    return(list())
-  }
-
+  if (req$REQUEST_METHOD == "OPTIONS"){ res$status <- 200; return(list()) }
   forward()
 }
 
-# ---------------------------------------------------------------------------
-# 4.  Helper — apply per-column search, ordering, paging
-# ---------------------------------------------------------------------------
-apply_query <- function(df, q, do_page = TRUE){
-  # -- column search ---------------------------------------------------------
-  for (i in seq_along(df)){
-    col_query <- q[[sprintf("columns[%d][search][value]", i - 1)]]
-    if (!is.null(col_query) && nzchar(col_query)){
-      col_query <- gsub("^\\^|\\$$", "", col_query)   # drop anchors
-      cn <- names(df)[i]
-      df <- df |>
-        filter(grepl(col_query, as.character(.data[[cn]]), ignore.case = TRUE))
-    }
-  }
-
-  # -- ordering (first instruction only) ------------------------------------
-  if (!is.null(q[["order[0][column]"]])){
-    col_idx <- as.integer(q[["order[0][column]"]]) + 1L
-    if (!is.na(col_idx) && col_idx <= ncol(df)){
-      cn  <- names(df)[col_idx]
-      dir <- q[["order[0][dir]"]]
-      df  <- if (identical(dir, "desc")){
-        arrange(df, desc(.data[[cn]]))
-      } else {
-        arrange(df, .data[[cn]])
-      }
-    }
-  }
-
-  # -- paging ---------------------------------------------------------------
-  if (do_page){
-    start  <- as.integer(q[["start"]]  %||% 0L)
-    length <- as.integer(q[["length"]] %||% 10L)
-    if (!is.na(start) && !is.na(length) && length > 0){
-      end <- min(start + length, nrow(df))
-      df  <- if (start <= end) df[(start + 1L):end, ] else df[0, ]
-    }
-  }
-
-  df
-}
-
-# ---------------------------------------------------------------------------
-# 5.  Data endpoint (now with `filters` on draw == 1)
-# ---------------------------------------------------------------------------
-#* @serializer unboxedJSON list(dataframe = "rows", auto_unbox = TRUE, na = "null")
+# 3. Data endpoint ---------------------------------------------------------
+#* @serializer json list(na="string")
 #* @get /data
 function(req){
-  q      <- req$args
-  draw_i <- as.integer(q[["draw"]] %||% 0L)
+  q <- req$args
 
-  df_page     <- apply_query(data, q, do_page = TRUE)
-  filtered_n  <- nrow(apply_query(data, q, do_page = FALSE))
+  # ---- custom filters ----------------------------------------------------
+  filtered <- data |>
+    { if (nzchar(q$state     %||% "")) filter(., apprehension_state  %in% strsplit(q$state,   ",")[[1]]) else . } |>
+    { if (nzchar(q$aor       %||% "")) filter(., apprehension_aor    %in% strsplit(q$aor,     ",")[[1]]) else . } |>
+    { if (nzchar(q$country   %||% "")) filter(., citizenship_country %in% strsplit(q$country, ",")[[1]]) else . } |>
+    { if (nzchar(q$date_from %||% "")) filter(., apprehension_date >= as_date(q$date_from)) else . } |>
+    { if (nzchar(q$date_to   %||% "")) filter(., apprehension_date <= as_date(q$date_to)) else . }
 
-  out <- list(
-    draw            = draw_i,
-    recordsTotal    = nrow(data),
-    recordsFiltered = filtered_n,
-    data            = df_page
-  )
+  # ---- paging & ordering like DataTables expects -------------------------
+  draw   <- as.integer(q$draw   %||% 0)
+  start  <- as.integer(q$start  %||% 0)
+  length <- as.integer(q$length %||% 25)
 
-  # Send the filter lists only on the very first draw
-  if (identical(draw_i, 1L)){
-    out$filters <- filters_cache
+  # simple first-column ordering (extend if needed)
+  if (!is.null(q[["order[0][column]"]])){
+    col_idx <- as.integer(q[["order[0][column]"]]) + 1L
+    dir     <- q[["order[0][dir]"]]
+    ord_col <- names(filtered)[col_idx]
+    filtered <- if (identical(dir, "desc"))
+        arrange(filtered, desc(.data[[ord_col]])) else arrange(filtered, .data[[ord_col]])
   }
 
-  out
+  page <- if (length > 0) slice(filtered, (start+1):(start+length)) else filtered
+
+  list(
+    draw            = draw,
+    recordsTotal    = nrow(data),
+    recordsFiltered = nrow(filtered),
+    data            = mutate(page, across(where(is.Date), as.character))
+  )
 }
 
-# ---------------------------------------------------------------------------
-# 6.  Download endpoint (unchanged)
-# ---------------------------------------------------------------------------
-#* Download filtered dataset as CSV, Excel, or Stata
-#* @serializer contentType list(type = "application/octet-stream")
+# 4. Download endpoint -----------------------------------------------------
+#* @serializer contentType list(type="application/octet-stream")
 #* @get /download
 function(req, res){
   q      <- req$args
-  format <- tolower(q[["format"]] %||% "csv")
-  df_out <- apply_query(data, q, do_page = FALSE)
+  format <- tolower(q$format %||% "csv")
 
-  fn_base <- sprintf("filtered_%s", format(Sys.time(), "%Y%m%d_%H%M%S"))
+  df_out <- get("/data", req)$data |> as_tibble()   # reuse same logic
+
+  fname <- sprintf("filtered_%s_%s", format, format(Sys.time(), "%Y%m%d_%H%M%S"))
 
   if (format == "xlsx"){
-    tmp <- tempfile(fileext = ".xlsx")
-    writexl::write_xlsx(df_out, tmp)
-    res$setHeader("Content-Disposition",
-                  paste0('attachment; filename="', fn_base, '.xlsx"'))
-    res$setHeader("Content-Type",
-                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    readBin(tmp, "raw", n = file.info(tmp)$size)
+    tmp <- tempfile(fileext=".xlsx"); write_xlsx(df_out, tmp)
+    res$setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    res$setHeader("Content-Disposition", sprintf('attachment; filename="%s.xlsx"', fname))
+    readBin(tmp, "raw", n=file.info(tmp)$size)
 
   } else if (format == "dta"){
-    tmp <- tempfile(fileext = ".dta")
-    haven::write_dta(df_out, tmp)
-    res$setHeader("Content-Disposition",
-                  paste0('attachment; filename="', fn_base, '.dta"'))
+    tmp <- tempfile(fileext=".dta"); write_dta(df_out, tmp)
     res$setHeader("Content-Type", "application/x-stata-dta")
-    readBin(tmp, "raw", n = file.info(tmp)$size)
+    res$setHeader("Content-Disposition", sprintf('attachment; filename="%s.dta"', fname))
+    readBin(tmp, "raw", n=file.info(tmp)$size)
 
-  } else {                  # default = CSV
-    res$setHeader("Content-Disposition",
-                  paste0('attachment; filename="', fn_base, '.csv"'))
+  } else {
     res$setHeader("Content-Type", "text/csv")
-    paste(capture.output(write.csv(df_out, row.names = FALSE, na = "")),
-          collapse = "\n")
+    res$setHeader("Content-Disposition", sprintf('attachment; filename="%s.csv"', fname))
+    paste(capture.output(write.csv(df_out, row.names=FALSE, na="")), collapse="\n")
   }
 }
 
+# 5. Health ping -----------------------------------------------------------
 #* @get /
-function(){
-  list(status = "ok")
-}
+function(){ list(status="ok") }
 
-# ---------------------------------------------------------------------------
-# 7.  Run when invoked directly (unchanged)
-# ---------------------------------------------------------------------------
-if (sys.nframe() == 0L){
-  port <- as.integer(Sys.getenv("PORT", 8000))
-  plumber::plumb()$run(host = "0.0.0.0", port = port)
+# 6. Run if script is called directly -------------------------------------
+if (sys.nframe() == 0){
+  plumber::plumb()$run(host="0.0.0.0", port=as.integer(Sys.getenv("PORT", 8000)))
 }
